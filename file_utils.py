@@ -25,4 +25,20 @@ def update_progress(app):
             status.append(f"HorizTicks: {len(app.horizontal_ticks)}")
         if hasattr(app, "vertical_ticks"):
             status.append(f"VertTicks: {len(app.vertical_ticks)}")
+        # Add images remaining
+        if hasattr(app, "image_files") and hasattr(app, "current_index"):
+            remaining = len(app.image_files) - app.current_index
+            status.append(f"Images left: {remaining}")
         app.progress_label.config(text=" | ".join(status))
+
+def log_images_remaining(app):
+    remaining = len(app.image_files) - app.current_index
+    msg = f"{remaining} images remaining to be analyzed."
+    log_to_console(app, msg)
+    # Also update the progress label
+    update_progress(app)
+
+def log_images_found(app):
+    total = len(app.image_files)
+    log_to_console(app, f"{total} images found in the directory: {app.image_dir}")
+    log_images_remaining(app)
