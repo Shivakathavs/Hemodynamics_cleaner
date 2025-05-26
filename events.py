@@ -1,4 +1,3 @@
-# ---- events.py ----
 from file_utils import log_to_console, update_progress
 
 def bind_events(app):
