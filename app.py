@@ -14,7 +14,9 @@ def main():
         return
 
     app = MedicalImageProcessor(root, image_dir=image_dir)
+    app.log_images_found()  # Log total and remaining images at startup
     root.mainloop()
 
 if __name__ == "__main__":
     main()
+    
