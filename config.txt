@@ -1,0 +1,3 @@
+{
+  "WINDOW_TITLE": "Medical Image Processor"
+}
