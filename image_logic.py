@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageTk
-from file_utils import find_all_images, log_to_console, update_progress, log_images_remaining, log_images_found
+from file_utils import find_all_images, log_to_console, update_progress
 from annotations import draw_annotations
 from ui import setup_ui
 
@@ -22,6 +22,8 @@ class MedicalImageProcessor:
         self.display_height = 900
 
         self.image_files = find_all_images(directory=self.image_dir)
+        log_to_console(self, f"Total images to process: {len(self.image_files)}")
+
         setup_ui(self, self.display_width, self.display_height)
 
         if self.image_files:
@@ -50,8 +52,6 @@ class MedicalImageProcessor:
         self.vertical_ticks = []
         self.tick_values = {"horizontal": [], "vertical": []}
         self.tick_units = {"horizontal": "", "vertical": ""}
-        self.location_entry = None
-        self.protocol_entry = None
 
     def set_tick_mode(self, mode):
         if mode == "horizontal":
@@ -78,9 +78,19 @@ class MedicalImageProcessor:
         self.vertical_ticks = []
         self.tick_values = {"horizontal": [], "vertical": []}
         self.tick_units = {"horizontal": "", "vertical": ""}
+
+        log_to_console(self, f"Image {self.current_index + 1} of {len(self.image_files)}")
+        log_to_console(self, f"Images left to process: {len(self.image_files) - self.current_index - 1}")
+
         self.update_display()
         log_to_console(self, f"Loaded image: {self.current_file}")
-        log_images_remaining(self)
+    
+    def log_images_found(self):
+        total = len(self.image_files)
+        remaining = total - self.current_index - 1
+        log_to_console(self, f"Total images to process: {total}")
+        log_to_console(self, f"Currently viewing image {self.current_index + 1}")
+        log_to_console(self, f"Images left to process: {remaining}")
 
     def update_display(self):
         img = self.cv_image if self.cv_image is not None else self.original_image
@@ -109,22 +119,6 @@ class MedicalImageProcessor:
         self.canvas.create_image(0, 0, anchor="nw", image=self.tk_image)
         self.canvas.config(scrollregion=(0, 0, new_w, new_h))
         update_progress(self)
-
-        # Draw temporary ROI (dotted + shaded) if cropping in progress
-        if self.crop_rect:
-            x0, y0, x1, y1 = self.crop_rect
-            self.canvas.create_rectangle(x0, y0, x1, y1, outline='orange', width=2, dash=(4, 2))
-            try:
-                # Fake alpha fill with transparent overlay
-                from PIL import ImageDraw, Image as PILImage, ImageTk as PILImageTk
-                overlay = PILImage.new('RGBA', (self.displayed_image_width, self.displayed_image_height), (0,0,0,0))
-                draw = ImageDraw.Draw(overlay)
-                draw.rectangle([x0, y0, x1, y1], fill=(255, 200, 0, 70))
-                overlay_tk = PILImageTk.PhotoImage(overlay)
-                self.canvas.create_image(0, 0, anchor='nw', image=overlay_tk)
-                self._temporary_overlay_tk = overlay_tk
-            except Exception:
-                pass
 
     def clear_horizontal_ticks(self):
         self.horizontal_ticks = []
@@ -176,7 +170,7 @@ class MedicalImageProcessor:
         self.update_display()
 
     def start_roi_mode(self, mode):
-        self.roi_mode = mode  # "ECG" or "Waveform"
+        self.roi_mode = mode
         self.crop_mode = True
         self.crop_start = None
         self.crop_rect = None
@@ -264,61 +258,49 @@ class MedicalImageProcessor:
             log_to_console(self, "Redid last ROI")
 
     def save_to_excel(self):
-        # Sheet 1: ROI summary with metadata
-        location = self.get_location()
-        protocol = self.get_protocol()
-        if not location or not protocol:
-            log_to_console(self, "Location and Protocol fields cannot be empty.")
+        if not self.get_location() or not self.get_type():
+            log_to_console(self, "Location and Type fields cannot be empty.")
             return
 
-        roi_data = [(x0, y0, x1, y1, mode, location, protocol)
-                    for (x0, y0, x1, y1, mode) in self.roi_rectangles]
-        df1 = pd.DataFrame(columns=["x0", "y0", "x1", "y1", "mode", "location", "protocol"], data=roi_data)
+        hticks = self.horizontal_ticks
+        vticks = self.vertical_ticks
 
-        # Sheet 2: Calibration (tick values, units, and also location/protocol for completeness)
-        cal_rows = []
-        h_ticks = self.tick_values.get("horizontal", [])
-        v_ticks = self.tick_values.get("vertical", [])
-        h_units = self.tick_units.get("horizontal", "")
-        v_units = self.tick_units.get("vertical", "")
-        cal_rows.append({
-            "calibration_type": "horizontal",
-            "tick1_value": h_ticks[0] if len(h_ticks) > 0 else "",
-            "tick2_value": h_ticks[1] if len(h_ticks) > 1 else "",
-            "units": h_units,
-            "location": location,
-            "protocol": protocol
-        })
-        cal_rows.append({
-            "calibration_type": "vertical",
-            "tick1_value": v_ticks[0] if len(v_ticks) > 0 else "",
-            "tick2_value": v_ticks[1] if len(v_ticks) > 1 else "",
-            "units": v_units,
-            "location": location,
-            "protocol": protocol
-        })
-        df2 = pd.DataFrame(cal_rows, columns=["calibration_type", "tick1_value", "tick2_value", "units", "location", "protocol"])
+        horizontal_tick_values = self.tick_values.get("horizontal", ["", ""])
+        vertical_tick_values = self.tick_values.get("vertical", ["", ""])
+        horizontal_units = self.tick_units.get("horizontal", "")
+        vertical_units = self.tick_units.get("vertical", "")
+        waveform_type = self.get_type()
+        waveform_location = self.get_location()
+        protocol = self.get_protocol()
 
-        excel_path = os.path.join(self.image_dir, "roi_summary.xlsx")
-        with pd.ExcelWriter(excel_path) as writer:
-            df1.to_excel(writer, index=False, sheet_name="ROIs")
-            df2.to_excel(writer, index=False, sheet_name="Calibration")
+        data = {
+            "horizontal_tick1_px": [hticks[0][0] if len(hticks) > 0 else ""],
+            "horizontal_tick1_py": [hticks[0][1] if len(hticks) > 0 else ""],
+            "horizontal_tick2_px": [hticks[1][0] if len(hticks) > 1 else ""],
+            "horizontal_tick2_py": [hticks[1][1] if len(hticks) > 1 else ""],
+            "horizontal_tick1_value": [horizontal_tick_values[0]],
+            "horizontal_tick2_value": [horizontal_tick_values[1]],
+            "horizontal_units": [horizontal_units],
 
-        log_to_console(self, f"Saved ROI summary and calibration with metadata: {excel_path}")
+            "vertical_tick1_px": [vticks[0][0] if len(vticks) > 0 else ""],
+            "vertical_tick1_py": [vticks[0][1] if len(vticks) > 0 else ""],
+            "vertical_tick2_px": [vticks[1][0] if len(vticks) > 1 else ""],
+            "vertical_tick2_py": [vticks[1][1] if len(vticks) > 1 else ""],
+            "vertical_tick1_value": [vertical_tick_values[0]],
+            "vertical_tick2_value": [vertical_tick_values[1]],
+            "vertical_units": [vertical_units],
 
-    # --- New methods for image logging ---
-    def log_images_remaining(self):
-        log_images_remaining(self)
+            "waveform_type": [waveform_type],
+            "waveform_location": [waveform_location],
+            "co_present": [self.co_present_var.get() if hasattr(self, "co_present_var") else ""],
 
-    def log_images_found(self):
-        log_images_found(self)
+            "location_free_text": [self.get_location()],
+            "protocol_free_text": [self.get_protocol()],
+        }
 
-    def get_location(self):
-        if hasattr(self, "location_entry") and self.location_entry is not None:
-            return self.location_entry.get().strip()
-        return ""
-
-    def get_protocol(self):
-        if hasattr(self, "protocol_entry") and self.protocol_entry is not None:
-            return self.protocol_entry.get().strip()
-        return ""
+        df = pd.DataFrame(data)
+        base_filename = os.path.splitext(os.path.basename(self.current_file))[0]
+        output_dir = os.path.dirname(self.current_file)
+        excel_path = os.path.join(output_dir, f"{base_filename}.xlsx")
+        df.to_excel(excel_path, index=False)
+        log_to_console(self, f"Saved calibration and metadata to: {excel_path}")
